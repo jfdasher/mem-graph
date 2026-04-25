@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
+from uuid import UUID as _UUID
 
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import text as _text
 
 if TYPE_CHECKING:
     pass
@@ -34,4 +36,56 @@ def parse_extraction(raw: dict[str, Any]) -> ExtractionResult:
         return ExtractionResult(facts=[])
 
 
-# extract_facts_from_chunk() implemented in Task 3
+def _emb_str(embedding: list[float]) -> str:
+    return "[" + ",".join(str(x) for x in embedding) + "]"
+
+
+def extract_facts_from_chunk(
+    engine: Any,
+    embedder: Any,
+    llm: Any,
+    source_chunk_id: _UUID,
+    chunk_text: str,
+) -> list[_UUID]:
+    """Extract facts via LLM, embed each, and write to facts table.
+
+    Does NOT resolve entities or write fact_entities — done by ingest_chunk (Task 5).
+    Returns list of inserted fact UUIDs.
+    """
+    raw = llm.extract_facts(chunk_text)
+    result = parse_extraction(raw)
+
+    if not result.facts:
+        return []
+
+    fact_texts = [f.text for f in result.facts]
+    embeddings = embedder.embed(fact_texts)
+
+    fact_ids: list[_UUID] = []
+    with engine.connect() as conn:
+        for fact, embedding in zip(result.facts, embeddings, strict=True):
+            row = conn.execute(
+                _text("""
+                    INSERT INTO facts
+                        (text, fact_type, source_chunk_id, temporal_start,
+                         temporal_end, confidence, embedding)
+                    VALUES
+                        (:text, :fact_type, :source_chunk_id, :temporal_start,
+                         :temporal_end, :confidence, (:embedding)::vector)
+                    RETURNING id
+                """),
+                {
+                    "text": fact.text,
+                    "fact_type": fact.fact_type,
+                    "source_chunk_id": str(source_chunk_id),
+                    "temporal_start": fact.temporal_start,
+                    "temporal_end": fact.temporal_end,
+                    "confidence": fact.confidence,
+                    "embedding": _emb_str(embedding),
+                },
+            ).fetchone()
+            assert row is not None
+            fact_ids.append(_UUID(str(row[0])))
+        conn.commit()
+
+    return fact_ids
