@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
-from uuid import UUID
 
 from pydantic import BaseModel, Field, ValidationError
 
 if TYPE_CHECKING:
-    from .llm import LLMProvider
+    pass
 
 
 class ExtractedEntity(BaseModel):
