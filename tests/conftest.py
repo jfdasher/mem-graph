@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Generator
 
 import filelock
 import pytest
@@ -12,6 +13,8 @@ from memgraph import LocalEmbedder, OpenAIEmbedder, create_graph_schema, create_
 POSTGRES_IMAGE = "pgvector/pgvector:pg16"
 _LOCAL_DIM = 384
 
+_pg_container: PostgresContainer | None = None
+
 
 @pytest.fixture(scope="session")
 def worker_id(request: pytest.FixtureRequest) -> str:
@@ -21,7 +24,8 @@ def worker_id(request: pytest.FixtureRequest) -> str:
 
 
 @pytest.fixture(scope="session")
-def pg(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> str:
+def pg(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> Generator[str, None, None]:
+    global _pg_container
     root_tmp = (
         tmp_path_factory.getbasetemp().parent
         if worker_id != "master"
@@ -31,13 +35,12 @@ def pg(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> str:
     url_file = root_tmp / "pg_url.txt"
 
     with filelock.FileLock(str(lock_file)):
-        if url_file.exists():
-            return url_file.read_text().strip()
-        container = PostgresContainer(image=POSTGRES_IMAGE)
-        container.start()
-        url = container.get_connection_url()
-        url_file.write_text(url)
-        return url
+        if not url_file.exists():
+            _pg_container = PostgresContainer(image=POSTGRES_IMAGE)
+            _pg_container.start()
+            url_file.write_text(_pg_container.get_connection_url())
+
+    yield url_file.read_text().strip()
 
 
 @pytest.fixture(scope="session")
@@ -62,9 +65,17 @@ def openai_embedder() -> OpenAIEmbedder:
 
 
 @pytest.fixture
-def clean_db(engine: Engine) -> object:
+def clean_db(engine: Engine) -> Generator[None, None, None]:
     yield
     with engine.connect() as conn:
-        # chunks CASCADE → facts → fact_entities; entities CASCADE → entity_links, fact_entities
-        conn.execute(text("TRUNCATE chunks, entities RESTART IDENTITY CASCADE"))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM pg_tables WHERE tablename = 'entities') THEN
+                    TRUNCATE chunks, entities RESTART IDENTITY CASCADE;
+                ELSE
+                    TRUNCATE chunks RESTART IDENTITY CASCADE;
+                END IF;
+            END $$;
+        """))
         conn.commit()
