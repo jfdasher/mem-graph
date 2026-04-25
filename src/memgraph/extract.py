@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
-from uuid import UUID as _UUID
+from uuid import UUID
 
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import Engine
 from sqlalchemy import text as _text
 
 if TYPE_CHECKING:
-    pass
+    from .llm import LLMProvider
 
 
 class ExtractedEntity(BaseModel):
@@ -32,7 +33,9 @@ class ExtractionResult(BaseModel):
 def parse_extraction(raw: dict[str, Any]) -> ExtractionResult:
     try:
         return ExtractionResult.model_validate(raw)
-    except (ValidationError, Exception):
+    except ValidationError:
+        return ExtractionResult(facts=[])
+    except Exception:
         return ExtractionResult(facts=[])
 
 
@@ -41,12 +44,12 @@ def _emb_str(embedding: list[float]) -> str:
 
 
 def extract_facts_from_chunk(
-    engine: Any,
+    engine: Engine,
     embedder: Any,
-    llm: Any,
-    source_chunk_id: _UUID,
+    llm: LLMProvider,
+    source_chunk_id: UUID,
     chunk_text: str,
-) -> list[_UUID]:
+) -> list[UUID]:
     """Extract facts via LLM, embed each, and write to facts table.
 
     Does NOT resolve entities or write fact_entities — done by ingest_chunk (Task 5).
@@ -61,7 +64,7 @@ def extract_facts_from_chunk(
     fact_texts = [f.text for f in result.facts]
     embeddings = embedder.embed(fact_texts)
 
-    fact_ids: list[_UUID] = []
+    fact_ids: list[UUID] = []
     with engine.connect() as conn:
         for fact, embedding in zip(result.facts, embeddings, strict=True):
             row = conn.execute(
@@ -85,7 +88,7 @@ def extract_facts_from_chunk(
                 },
             ).fetchone()
             assert row is not None
-            fact_ids.append(_UUID(str(row[0])))
+            fact_ids.append(UUID(str(row[0])))
         conn.commit()
 
     return fact_ids
