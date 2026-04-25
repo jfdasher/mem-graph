@@ -15,7 +15,9 @@ class Reranker:
 
     def _load(self) -> None:
         if self._model is None:
-            from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
+            from sentence_transformers import (
+                CrossEncoder,  # type: ignore[import-untyped,unused-ignore]
+            )
 
             self._model = CrossEncoder(self.model_name)
 

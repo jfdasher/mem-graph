@@ -86,15 +86,22 @@ def expand(
                 {"seeds": seeds_pg},
             ).fetchall()
 
+        # Collect max score per neighbor across all seed edges before marking seen,
+        # so a neighbor reachable from multiple seeds at different co_counts gets
+        # the highest score regardless of Postgres row order.
+        hop_scores: dict[UUID, float] = {}
         for row in rows:
             neighbor_id = UUID(str(row.neighbor_id))
             if neighbor_id in seen:
                 continue
             candidate_score = decay * row.co_count
+            if neighbor_id not in hop_scores or candidate_score > hop_scores[neighbor_id]:
+                hop_scores[neighbor_id] = candidate_score
+
+        for neighbor_id, candidate_score in hop_scores.items():
             if neighbor_id not in scores or candidate_score > scores[neighbor_id]:
                 scores[neighbor_id] = candidate_score
-                if neighbor_id not in next_frontier:
-                    next_frontier.append(neighbor_id)
+            next_frontier.append(neighbor_id)
             seen.add(neighbor_id)
 
         current_frontier = list(set(next_frontier))

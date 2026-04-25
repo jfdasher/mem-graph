@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import pytest
 from sqlalchemy import Engine, text
 
 from memgraph.ingest import ingest_chunk
@@ -111,6 +112,37 @@ def test_expand_two_hops_returns_neighbors_of_neighbors(
         ).scalar_one()))
 
     assert carol_id in neighbor_ids_2hop
+
+
+def test_expand_multi_seed_picks_max_co_count(
+    engine: Engine, local_embedder, clean_db
+) -> None:
+    """Neighbor reachable from two seeds with different co_counts gets max score."""
+    from memgraph.graph import expand, upsert_entity_links
+    from memgraph.resolve import resolve_or_create
+
+    alice_id = resolve_or_create(engine, "Alice", "person")
+    bob_id = resolve_or_create(engine, "Bob", "person")
+    carol_id = resolve_or_create(engine, "Carol", "person")
+    dave_id = resolve_or_create(engine, "Dave", "person")
+
+    # Alice-Dave co_count=1, Bob-Dave co_count=3: max score from Dave's perspective is 3.0
+    upsert_entity_links(engine, [alice_id, dave_id])  # co_count=1
+    upsert_entity_links(engine, [bob_id, dave_id])
+    upsert_entity_links(engine, [bob_id, dave_id])
+    upsert_entity_links(engine, [bob_id, dave_id])   # co_count=3
+    # Carol-Dave co_count=2 (intermediate)
+    upsert_entity_links(engine, [carol_id, dave_id])
+    upsert_entity_links(engine, [carol_id, dave_id])  # co_count=2
+
+    # Seed on Alice+Bob+Carol simultaneously: Dave is reachable from all three
+    neighbors = expand(engine, [alice_id, bob_id, carol_id], hops=1)
+    dave = next((n for n in neighbors if n.name.lower() == "dave"), None)
+    assert dave is not None, "Dave should be found as a neighbor"
+    # hop_decay=1.0, max co_count=3 → max score=3.0 (from Bob→Dave edge)
+    assert dave.score == pytest.approx(3.0), (
+        f"Dave's score should be 3.0 (max co_count from Bob), got {dave.score}"
+    )
 
 
 def test_expand_ranking_uses_hop_decay_and_weight(
