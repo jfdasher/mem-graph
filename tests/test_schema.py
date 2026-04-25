@@ -45,9 +45,13 @@ def test_entity_links_pk_ordering_constraint(engine: Engine) -> None:
     with engine.connect() as conn:
         row = conn.execute(
             text("""
-                SELECT conname FROM pg_constraint
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
                 WHERE conrelid = 'entity_links'::regclass
                   AND contype = 'c'
             """)
         ).fetchone()
-    assert row is not None, "entity_links CHECK constraint (a < b) missing"
+    assert row is not None, "entity_links CHECK constraint missing"
+    assert "entity_a_id < entity_b_id" in row[0], (
+        f"Expected ordering predicate in CHECK constraint, got: {row[0]}"
+    )
