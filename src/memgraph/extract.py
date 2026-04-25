@@ -44,6 +44,53 @@ def _emb_str(embedding: list[float]) -> str:
     return "[" + ",".join(str(x) for x in embedding) + "]"
 
 
+def extract_facts_with_entities(
+    engine: Engine,
+    embedder: Embedder,
+    llm: LLMProvider,
+    source_chunk_id: UUID,
+    chunk_text: str,
+) -> list[tuple[UUID, list[ExtractedEntity]]]:
+    """Extract and write facts; return (fact_id, entities) tuples for caller to resolve."""
+    raw = llm.extract_facts(chunk_text)
+    result = parse_extraction(raw)
+
+    if not result.facts:
+        return []
+
+    fact_texts = [f.text for f in result.facts]
+    embeddings = embedder.embed(fact_texts)
+
+    records: list[tuple[UUID, list[ExtractedEntity]]] = []
+    with engine.connect() as conn:
+        for fact, embedding in zip(result.facts, embeddings, strict=True):
+            row = conn.execute(
+                _text("""
+                    INSERT INTO facts
+                        (text, fact_type, source_chunk_id, temporal_start,
+                         temporal_end, confidence, embedding)
+                    VALUES
+                        (:text, :fact_type, :source_chunk_id, :temporal_start,
+                         :temporal_end, :confidence, (:embedding)::vector)
+                    RETURNING id
+                """),
+                {
+                    "text": fact.text,
+                    "fact_type": fact.fact_type,
+                    "source_chunk_id": str(source_chunk_id),
+                    "temporal_start": fact.temporal_start,
+                    "temporal_end": fact.temporal_end,
+                    "confidence": fact.confidence,
+                    "embedding": _emb_str(embedding),
+                },
+            ).fetchone()
+            assert row is not None
+            records.append((UUID(str(row[0])), fact.entities))
+        conn.commit()
+
+    return records
+
+
 def extract_facts_from_chunk(
     engine: Engine,
     embedder: Embedder,
