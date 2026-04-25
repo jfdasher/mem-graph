@@ -1,0 +1,57 @@
+[project]
+name = "mem-graph"
+version = "0.1.0"
+description = "Hybrid RAG with LLM fact extraction, entity graph, and cross-encoder reranking over Postgres."
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "pgvector>=0.3",
+    "pydantic>=2.0",
+    "sentence-transformers>=3.0",
+    "openai>=1.0",
+    "anthropic>=0.25",
+    "typer>=0.12",
+    "pypdf>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-xdist>=3.5",
+    "testcontainers[postgres]>=4.0",
+    "filelock>=3.13",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "pytest-timeout>=2.4.0",
+]
+
+[project.scripts]
+memgraph = "memgraph.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memgraph"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "W", "UP"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --dist=loadgroup"
+markers = ["llm: require real LLM API key (skipped by default)"]
