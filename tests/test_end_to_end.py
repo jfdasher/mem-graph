@@ -45,16 +45,33 @@ def test_semantic_retrieval_surfaces_relevant_facts(
 def test_graph_retrieval_crosses_entity_boundary(
     engine: Engine, local_embedder, clean_db
 ) -> None:
-    for text_content, canned in THREE_TURN_TRANSCRIPT:
+    # Turn 1: Alice-only fact (no Bob)
+    ALICE_ONLY = {
+        "facts": [{
+            "text": "Alice presented the analysis findings to the board.",
+            "fact_type": "experience",
+            "entities": [{"name": "Alice", "type": "person"}],
+            "temporal_start": None, "temporal_end": None, "confidence": 0.9,
+        }]
+    }
+    # Turn 2: Alice+Bob co-occurrence (builds the link)
+    # Turn 3: Bob-only deadline fact (no Alice)
+
+    for text_content, canned in [
+        ("Alice presented findings.", ALICE_ONLY),
+        ("Alice told me she finished the merger analysis.", ALICE_BOB_COLAB),
+        ("Bob said the deadline for his part is next Friday.", BOB_DEADLINE),
+    ]:
         ingest_chunk(engine, local_embedder, MockLLM([canned]), text_content)
 
-    results = retrieve_facts(engine, local_embedder, "Alice", mode="graph", k=10, hops=1)
+    results = retrieve_facts(
+        engine, local_embedder, "Alice presented findings", mode="graph", k=10, hops=1
+    )
     result_texts = {r.text for r in results}
 
     # Bob's deadline fact should be reached via Alice→Bob link
-    assert any("deadline" in t.lower() or "friday" in t.lower() for t in result_texts), (
+    assert any("deadline" in t.lower() or "friday" in t.lower() for t in result_texts), \
         f"Graph mode should surface Bob's deadline via Alice→Bob link. Got: {result_texts}"
-    )
 
 
 def test_full_mode_returns_ranked_results(engine: Engine, local_embedder, clean_db) -> None:

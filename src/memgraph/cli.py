@@ -44,12 +44,20 @@ def _get_llm() -> LLMProvider:
 
     provider = os.environ.get("MEMGRAPH_LLM", "mock").lower()
     if provider == "openai":
-        key = os.environ.get("OPENAI_API_KEY", "")
+        key = os.environ.get("OPENAI_API_KEY")
+        if not key:
+            typer.echo("OPENAI_API_KEY is not set.", err=True)
+            raise typer.Exit(1)
         return OpenAILLM(api_key=key)
     if provider == "anthropic":
-        key = os.environ.get("ANTHROPIC_API_KEY", "")
+        key = os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            typer.echo("ANTHROPIC_API_KEY is not set.", err=True)
+            raise typer.Exit(1)
         return AnthropicLLM(api_key=key)
-    typer.echo("MEMGRAPH_LLM=mock — no facts will be extracted.", err=True)
+    typer.echo(
+        "No LLM configured — set MEMGRAPH_LLM=openai|anthropic for fact extraction.", err=True
+    )
     return MockLLM([])  # no-op mock for CLI without real LLM
 
 
