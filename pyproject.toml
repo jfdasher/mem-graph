@@ -55,3 +55,4 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 addopts = "-v --dist=loadgroup"
 markers = ["llm: require real LLM API key (skipped by default)"]
+pythonpath = ["."]
