@@ -9,6 +9,7 @@ from sqlalchemy import Engine
 from sqlalchemy import text as _text
 
 if TYPE_CHECKING:
+    from .embedders import Embedder
     from .llm import LLMProvider
 
 
@@ -45,7 +46,7 @@ def _emb_str(embedding: list[float]) -> str:
 
 def extract_facts_from_chunk(
     engine: Engine,
-    embedder: Any,
+    embedder: Embedder,
     llm: LLMProvider,
     source_chunk_id: UUID,
     chunk_text: str,
