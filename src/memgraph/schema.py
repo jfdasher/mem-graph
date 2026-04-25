@@ -15,9 +15,9 @@ class Chunk:
     text: str
     document_id: str | None
     tags: list[str]
-    metadata: dict[str, object]
+    metadata: dict[str, Any]
     ingested_at: datetime
-    score: float
+    score: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ class Fact:
     temporal_end: datetime | None
     confidence: float | None
     tags: list[str]
-    metadata: dict[str, object]
+    metadata: dict[str, Any]
     created_at: datetime
     score: float = 0.0
 
