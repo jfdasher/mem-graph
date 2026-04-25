@@ -77,7 +77,74 @@ def create_schema(engine: Engine, dimension: int) -> None:
 
 
 def create_graph_schema(engine: Engine, dimension: int) -> None:
-    pass  # implemented in Task 1
+    with engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS facts (
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                text            TEXT NOT NULL,
+                fact_type       TEXT NOT NULL CHECK (fact_type IN ('world', 'experience')),
+                source_chunk_id UUID NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+                temporal_start  TIMESTAMPTZ,
+                temporal_end    TIMESTAMPTZ,
+                confidence      REAL,
+                embedding       VECTOR({dimension}) NOT NULL,
+                tsv             TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', text)) STORED,
+                tags            TEXT[] NOT NULL DEFAULT '{{}}',
+                metadata        JSONB NOT NULL DEFAULT '{{}}',
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_facts_embedding_hnsw ON facts "
+            "USING hnsw (embedding vector_cosine_ops)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_facts_tsv ON facts USING GIN(tsv)"
+        ))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS entities (
+                id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                name       TEXT NOT NULL,
+                type       TEXT,
+                aliases    TEXT[] NOT NULL DEFAULT '{}',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_entities_name_trgm "
+            "ON entities USING GIN(name gin_trgm_ops)"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_entities_name_lower "
+            "ON entities(LOWER(name))"
+        ))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fact_entities (
+                fact_id   UUID NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
+                entity_id UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                PRIMARY KEY (fact_id, entity_id)
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_fact_entities_entity ON fact_entities(entity_id)"
+        ))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS entity_links (
+                entity_a_id UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                entity_b_id UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                co_count    INTEGER NOT NULL DEFAULT 1,
+                last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (entity_a_id, entity_b_id),
+                CHECK (entity_a_id < entity_b_id)
+            )
+        """))
+
+        conn.commit()
 
 
 def row_to_chunk(row: Any) -> Chunk:
