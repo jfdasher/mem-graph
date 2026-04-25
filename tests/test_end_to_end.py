@@ -45,33 +45,75 @@ def test_semantic_retrieval_surfaces_relevant_facts(
 def test_graph_retrieval_crosses_entity_boundary(
     engine: Engine, local_embedder, clean_db
 ) -> None:
-    # Turn 1: Alice-only fact (no Bob)
-    ALICE_ONLY = {
-        "facts": [{
-            "text": "Alice presented the analysis findings to the board.",
-            "fact_type": "experience",
-            "entities": [{"name": "Alice", "type": "person"}],
-            "temporal_start": None, "temporal_end": None, "confidence": 0.9,
-        }]
-    }
-    # Turn 2: Alice+Bob co-occurrence (builds the link)
-    # Turn 3: Bob-only deadline fact (no Alice)
+    """Graph mode must traverse Alice→Bob entity link to surface Bob's deadline.
 
-    for text_content, canned in [
-        ("Alice presented findings.", ALICE_ONLY),
-        ("Alice told me she finished the merger analysis.", ALICE_BOB_COLAB),
-        ("Bob said the deadline for his part is next Friday.", BOB_DEADLINE),
-    ]:
-        ingest_chunk(engine, local_embedder, MockLLM([canned]), text_content)
+    Corpus: 3 Alice-only facts fill the k=1 seed window (candidate_k=3), plus
+    1 Bob-only deadline fact outside the window. The Alice→Bob link is inserted
+    directly (no joint fact), so the deadline can only appear via expansion.
+    Counterfactual: deleting the link removes Bob from expansion and the deadline
+    disappears from the top-1 result.
+    """
+    from memgraph.graph import upsert_entity_links
+    from memgraph.resolve import resolve_or_create
 
+    alice_canned = [
+        {"facts": [{"text": "Alice presented the analysis findings to the board.",
+                    "fact_type": "experience",
+                    "entities": [{"name": "Alice", "type": "person"}],
+                    "temporal_start": None, "temporal_end": None, "confidence": 0.9}]},
+        {"facts": [{"text": "Alice discussed her research conclusions with stakeholders.",
+                    "fact_type": "experience",
+                    "entities": [{"name": "Alice", "type": "person"}],
+                    "temporal_start": None, "temporal_end": None, "confidence": 0.9}]},
+        {"facts": [{"text": "Alice shared the preliminary results with her colleagues.",
+                    "fact_type": "experience",
+                    "entities": [{"name": "Alice", "type": "person"}],
+                    "temporal_start": None, "temporal_end": None, "confidence": 0.9}]},
+    ]
+    for canned in alice_canned:
+        ingest_chunk(engine, local_embedder, MockLLM([canned]), canned["facts"][0]["text"])
+
+    # Bob's deadline fact — no Alice entity, so it only appears via graph expansion
+    ingest_chunk(engine, local_embedder, MockLLM([BOB_DEADLINE]),
+                 "Bob said the deadline for his part is next Friday.")
+
+    # Insert the Alice→Bob co-occurrence link directly (no joint fact in corpus)
+    alice_id = resolve_or_create(engine, "Alice", "person")
+    bob_id = resolve_or_create(engine, "Bob", "person")
+    upsert_entity_links(engine, [alice_id, bob_id])
+
+    # k=1 → candidate_k=3: top-3 hybrid seeds are the Alice facts (closest to query).
+    # Expansion reaches Bob (score=1.0) → BOB_DEADLINE scores 1.0, ranking above seeds.
     results = retrieve_facts(
-        engine, local_embedder, "Alice presented findings", mode="graph", k=10, hops=1
+        engine, local_embedder, "Alice presented findings", mode="graph", k=1, hops=1
     )
     result_texts = {r.text for r in results}
-
-    # Bob's deadline fact should be reached via Alice→Bob link
     assert any("deadline" in t.lower() or "friday" in t.lower() for t in result_texts), \
         f"Graph mode should surface Bob's deadline via Alice→Bob link. Got: {result_texts}"
+
+    # Counterfactual: delete the link — Bob not reachable, deadline excluded
+    with engine.connect() as conn:
+        conn.execute(
+            text("""
+                DELETE FROM entity_links
+                WHERE (entity_a_id = :a AND entity_b_id = :b)
+                   OR (entity_a_id = :b AND entity_b_id = :a)
+            """),
+            {"a": str(alice_id), "b": str(bob_id)},
+        )
+        conn.commit()
+
+    results_no_link = retrieve_facts(
+        engine, local_embedder, "Alice presented findings", mode="graph", k=1, hops=1
+    )
+    result_texts_no_link = {r.text for r in results_no_link}
+    has_deadline = any(
+        "deadline" in t.lower() or "friday" in t.lower() for t in result_texts_no_link
+    )
+    assert not has_deadline, (
+        f"After deleting Alice→Bob link, deadline should NOT appear in top-1 result. "
+        f"Got: {result_texts_no_link}"
+    )
 
 
 def test_full_mode_returns_ranked_results(engine: Engine, local_embedder, clean_db) -> None:
