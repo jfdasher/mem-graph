@@ -4,7 +4,6 @@ import json
 from abc import ABC, abstractmethod
 from typing import Any
 
-
 EXTRACTION_SYSTEM_PROMPT = """\
 Extract atomic facts from the text. For each fact:
 - text: one concise sentence
