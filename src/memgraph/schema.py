@@ -57,7 +57,7 @@ def _create_extension(engine: Engine, name: str) -> None:
     try:
         with engine.execution_options(isolation_level="AUTOCOMMIT").connect() as conn:
             conn.execute(text(f"CREATE EXTENSION IF NOT EXISTS {name}"))
-    except exc.IntegrityError:
+    except exc.ProgrammingError:
         pass  # another worker already created it — safe to ignore
 
 
