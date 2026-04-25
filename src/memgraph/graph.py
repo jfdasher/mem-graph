@@ -19,6 +19,7 @@ def upsert_entity_links(engine: Engine, entity_ids: list[UUID]) -> None:
 
     Maintains entity_a_id < entity_b_id via UUID string comparison.
     """
+    entity_ids = list(dict.fromkeys(entity_ids))  # deduplicate, preserve order
     if len(entity_ids) < 2:
         return
 
@@ -92,7 +93,8 @@ def expand(
             candidate_score = decay * row.co_count
             if neighbor_id not in scores or candidate_score > scores[neighbor_id]:
                 scores[neighbor_id] = candidate_score
-            next_frontier.append(neighbor_id)
+                if neighbor_id not in next_frontier:
+                    next_frontier.append(neighbor_id)
             seen.add(neighbor_id)
 
         current_frontier = list(set(next_frontier))
