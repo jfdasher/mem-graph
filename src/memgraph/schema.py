@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, exc, text
 
 
 @dataclass(frozen=True)
@@ -52,9 +52,18 @@ class Filters:
     tags: list[str] | None = None
 
 
+def _create_extension(engine: Engine, name: str) -> None:
+    """Create a Postgres extension, ignoring concurrent-creation races."""
+    try:
+        with engine.execution_options(isolation_level="AUTOCOMMIT").connect() as conn:
+            conn.execute(text(f"CREATE EXTENSION IF NOT EXISTS {name}"))
+    except exc.IntegrityError:
+        pass  # another worker already created it — safe to ignore
+
+
 def create_schema(engine: Engine, dimension: int) -> None:
+    _create_extension(engine, "vector")
     with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(
             text(f"""
                 CREATE TABLE IF NOT EXISTS chunks (
@@ -69,17 +78,20 @@ def create_schema(engine: Engine, dimension: int) -> None:
                 )
             """)
         )
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chunks_ingested_at ON chunks(ingested_at)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chunks_document_id ON chunks(document_id)"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_chunks_ingested_at ON chunks(ingested_at)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_chunks_document_id ON chunks(document_id)"
+        ))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chunks_tags ON chunks USING GIN(tags)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chunks_tsv ON chunks USING GIN(tsv)"))
         conn.commit()
 
 
 def create_graph_schema(engine: Engine, dimension: int) -> None:
+    _create_extension(engine, "pg_trgm")
     with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-
         conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS facts (
                 id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

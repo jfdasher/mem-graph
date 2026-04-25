@@ -44,10 +44,20 @@ def pg(tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> Generator[st
 
 
 @pytest.fixture(scope="session")
-def engine(pg: str) -> Engine:
+def engine(pg: str, tmp_path_factory: pytest.TempPathFactory, worker_id: str) -> Engine:
     e = create_engine(pg)
-    create_schema(e, _LOCAL_DIM)
-    create_graph_schema(e, _LOCAL_DIM)
+    root_tmp = (
+        tmp_path_factory.getbasetemp().parent
+        if worker_id != "master"
+        else tmp_path_factory.getbasetemp()
+    )
+    schema_lock = root_tmp / "schema_setup.lock"
+    schema_done = root_tmp / "schema_done.txt"
+    with filelock.FileLock(str(schema_lock)):
+        if not schema_done.exists():
+            create_schema(e, _LOCAL_DIM)
+            create_graph_schema(e, _LOCAL_DIM)
+            schema_done.write_text("done")
     return e
 
 
@@ -79,3 +89,13 @@ def clean_db(engine: Engine) -> Generator[None, None, None]:
             END $$;
         """))
         conn.commit()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Co-locate all clean_db tests on one xdist worker to avoid cross-worker DB conflicts."""
+    for item in items:
+        if "clean_db" in getattr(item, "fixturenames", ()):
+            item.add_marker(pytest.mark.xdist_group("shared_db"))
