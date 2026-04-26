@@ -201,3 +201,19 @@ def row_to_entity(row: Any) -> Entity:
         aliases=list(row.aliases) if row.aliases else [],
         created_at=row.created_at,
     )
+
+
+def truncate_all(engine: Engine) -> None:
+    """Truncate all data tables, preserving schema. Safe to call when graph tables don't exist yet."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM pg_tables WHERE tablename = 'entities') THEN
+                    TRUNCATE chunks, entities RESTART IDENTITY CASCADE;
+                ELSE
+                    TRUNCATE chunks RESTART IDENTITY CASCADE;
+                END IF;
+            END $$;
+        """))
+        conn.commit()
