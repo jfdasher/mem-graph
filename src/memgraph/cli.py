@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+import sys
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -11,17 +13,32 @@ from .embedders import Embedder, LocalEmbedder, OpenAIEmbedder
 from .ingest import ingest_chunk, ingest_file
 from .llm import LLMProvider
 from .retrieve import retrieve_facts
-from .schema import create_graph_schema, create_schema
+from .schema import create_graph_schema, create_schema, truncate_all
 
 app = typer.Typer(help="memgraph — fact extraction + entity graph + reranking over Postgres")
 
 
-def _get_components() -> tuple[Engine, Embedder]:
+@app.callback()
+def _main(debug: Annotated[bool, typer.Option("--debug", "-d", help="Enable DEBUG logging")] = False) -> None:
+    if debug:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(levelname)s %(name)s: %(message)s",
+            stream=sys.stderr,
+            force=True,
+        )
+
+
+def _get_engine() -> Engine:
     url = os.environ.get("MEMGRAPH_DATABASE_URL")
     if not url:
         typer.echo("MEMGRAPH_DATABASE_URL is not set.", err=True)
         raise typer.Exit(1)
+    return create_engine(url)
 
+
+def _get_components() -> tuple[Engine, Embedder]:
+    engine = _get_engine()
     embedder_name = os.environ.get("MEMGRAPH_EMBEDDER", "local").lower()
     embedder: Embedder
     if embedder_name == "openai":
@@ -33,7 +50,6 @@ def _get_components() -> tuple[Engine, Embedder]:
     else:
         embedder = LocalEmbedder()
 
-    engine = create_engine(url)
     create_schema(engine, embedder.dimension)
     create_graph_schema(engine, embedder.dimension)
     return engine, embedder
@@ -145,3 +161,23 @@ def entities(
                 ).fetchall()
             for lnk in links:
                 typer.echo(f"    → {lnk.neighbor_name} (co_count={lnk.co_count})")
+
+
+@app.command()
+def reset(
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation prompt")] = False,
+) -> None:
+    """Delete all data from the database (schema preserved). Use --yes to skip confirmation."""
+    engine = _get_engine()
+    db_url = os.environ.get("MEMGRAPH_DATABASE_URL", "")
+    if not yes:
+        typer.confirm(f"This will DELETE all data from {db_url}. Continue?", abort=True)
+    with engine.connect() as conn:
+        total = 0
+        for t in ("chunks", "entities", "facts", "fact_entities", "entity_links"):
+            try:
+                total += conn.execute(text(f"SELECT count(*) FROM {t}")).scalar_one()  # noqa: S608
+            except Exception:
+                conn.rollback()
+    truncate_all(engine)
+    typer.echo(f"Truncated {total:,} rows across chunks, entities, facts, fact_entities, entity_links.")
