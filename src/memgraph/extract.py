@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
@@ -11,6 +12,8 @@ from sqlalchemy import text as _text
 if TYPE_CHECKING:
     from .embedders import Embedder
     from .llm import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractedEntity(BaseModel):
@@ -34,9 +37,11 @@ class ExtractionResult(BaseModel):
 def parse_extraction(raw: dict[str, Any]) -> ExtractionResult:
     try:
         return ExtractionResult.model_validate(raw)
-    except ValidationError:
+    except ValidationError as exc:
+        logger.warning("Failed to parse LLM extraction: %s", exc, exc_info=True)
         return ExtractionResult(facts=[])
-    except Exception:
+    except Exception as exc:
+        logger.warning("Unexpected error parsing extraction: %s", exc, exc_info=True)
         return ExtractionResult(facts=[])
 
 
@@ -54,6 +59,7 @@ def extract_facts_with_entities(
     """Extract and write facts; return (fact_id, entities) tuples for caller to resolve."""
     raw = llm.extract_facts(chunk_text)
     result = parse_extraction(raw)
+    logger.debug("extract: %d facts from %d chars", len(result.facts), len(chunk_text))
 
     if not result.facts:
         return []
@@ -85,7 +91,13 @@ def extract_facts_with_entities(
                 },
             ).fetchone()
             assert row is not None
-            records.append((UUID(str(row[0])), fact.entities))
+            fact_uuid = UUID(str(row[0]))
+            records.append((fact_uuid, fact.entities))
+            logger.debug(
+                "fact %s [%s] %r → entities=%s",
+                fact_uuid, fact.fact_type, fact.text[:80],
+                [(e.name, e.type) for e in fact.entities],
+            )
         conn.commit()
 
     return records

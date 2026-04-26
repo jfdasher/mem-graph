@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -16,6 +17,8 @@ from .resolve import resolve_or_create
 
 if TYPE_CHECKING:
     from .llm import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 def _emb_str(embedding: list[float]) -> str:
@@ -33,6 +36,7 @@ def ingest_chunk(
     metadata: dict[str, object] | None = None,
 ) -> UUID:
     """Embed content, insert chunk, extract facts, resolve entities, upsert links."""
+    logger.debug("ingest_chunk: doc_id=%r, %d chars", document_id, len(content))
     embedding = embedder.embed([content])[0]
     with engine.connect() as conn:
         row = conn.execute(
@@ -54,6 +58,7 @@ def ingest_chunk(
     chunk_id = UUID(str(row[0]))
 
     fact_records = extract_facts_with_entities(engine, embedder, llm, chunk_id, content)
+    logger.debug("ingest_chunk: chunk %s -> %d facts", chunk_id, len(fact_records))
 
     for fact_id, extracted_entities in fact_records:
         entity_ids: list[UUID] = []
@@ -97,6 +102,7 @@ def ingest_file(
 
     ids: list[UUID] = []
     for file_path in files:
+        logger.debug("ingest_file: %s", file_path)
         try:
             text_content = parse_file(file_path)
         except Exception:

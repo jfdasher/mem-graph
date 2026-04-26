@@ -26,8 +26,10 @@ def resolve_or_create(
     2. Trigram similarity on entity.name: >= high_threshold -> reuse;
        >= low_threshold -> new entity + log near-miss; else -> new entity.
     """
+    logger.debug("resolve(%r, type=%r)", name, entity_type)
     alias_id = _find_by_alias(engine, name)
     if alias_id is not None:
+        logger.debug("resolve: alias match %r -> %s", name, alias_id)
         return alias_id
 
     with engine.connect() as conn:
@@ -45,10 +47,13 @@ def resolve_or_create(
     if rows:
         top = rows[0]
         if top.sim >= high_threshold:
+            logger.debug("resolve: exact match %r -> %s (sim=%.3f)", name, top.id, top.sim)
             return UUID(str(top.id))
         logger.debug("Near-miss: %r <-> %r (sim=%.3f)", name, top.name, top.sim)
 
-    return _create_entity(engine, name, entity_type)
+    new_id = _create_entity(engine, name, entity_type)
+    logger.debug("resolve: created entity %r (%s) -> %s", name, entity_type, new_id)
+    return new_id
 
 
 def _find_by_alias(engine: Engine, name: str) -> UUID | None:
