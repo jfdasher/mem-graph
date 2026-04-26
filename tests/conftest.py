@@ -5,10 +5,10 @@ from collections.abc import Generator
 
 import filelock
 import pytest
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine
 from testcontainers.postgres import PostgresContainer
 
-from memgraph import LocalEmbedder, OpenAIEmbedder, create_graph_schema, create_schema
+from memgraph import LocalEmbedder, OpenAIEmbedder, create_graph_schema, create_schema, truncate_all
 
 POSTGRES_IMAGE = "pgvector/pgvector:pg16"
 _LOCAL_DIM = 384
@@ -77,18 +77,7 @@ def openai_embedder() -> OpenAIEmbedder:
 @pytest.fixture
 def clean_db(engine: Engine) -> Generator[None, None, None]:
     yield
-    with engine.connect() as conn:
-        conn.execute(text("""
-            DO $$
-            BEGIN
-                IF EXISTS (SELECT 1 FROM pg_tables WHERE tablename = 'entities') THEN
-                    TRUNCATE chunks, entities RESTART IDENTITY CASCADE;
-                ELSE
-                    TRUNCATE chunks RESTART IDENTITY CASCADE;
-                END IF;
-            END $$;
-        """))
-        conn.commit()
+    truncate_all(engine)
 
 
 @pytest.hookimpl(tryfirst=True)
