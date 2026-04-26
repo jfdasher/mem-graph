@@ -38,7 +38,7 @@ def parse_extraction(raw: dict[str, Any]) -> ExtractionResult:
     try:
         return ExtractionResult.model_validate(raw)
     except ValidationError as exc:
-        logger.warning("Failed to parse LLM extraction: %s", exc, exc_info=True)
+        logger.warning("Failed to parse extraction: %s", exc, exc_info=True)
         return ExtractionResult(facts=[])
     except Exception as exc:
         logger.warning("Unexpected error parsing extraction: %s", exc, exc_info=True)
