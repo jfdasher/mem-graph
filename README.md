@@ -1,7 +1,7 @@
 # mem-graph
 
 Hybrid RAG augmented with LLM-driven fact extraction, entity resolution,
-co-occurrence graph, and cross-encoder reranking — all over Postgres.
+co-occurrence graph, and cross-encoder reranking over Postgres.
 
 ---
 
