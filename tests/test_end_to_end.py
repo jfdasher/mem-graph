@@ -156,12 +156,16 @@ def test_openai_extraction_produces_facts(engine: Engine, local_embedder, clean_
 def test_anthropic_extraction_produces_facts(engine: Engine, local_embedder, clean_db) -> None:
     import os
 
-    from memgraph.llm import AnthropicLLM
+    from memgraph.llm import OpenAILLM
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         pytest.skip("ANTHROPIC_API_KEY not set")
-    llm = AnthropicLLM(api_key=api_key)
+    llm = OpenAILLM(
+        api_key=api_key,
+        model="claude-haiku-4-5-20251001",
+        base_url="https://api.anthropic.com/v1/",
+    )
     chunk_id = ingest_chunk(
         engine, local_embedder, llm,
         "Bob completed the financial model and delivered it to Alice before the deadline."

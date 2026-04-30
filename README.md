@@ -3,10 +3,6 @@
 Hybrid RAG augmented with LLM-driven fact extraction, entity resolution,
 co-occurrence graph, and cross-encoder reranking — all over Postgres.
 
-**Resume bullet**: "Hybrid RAG augmented with LLM-driven fact extraction,
-entity resolution, and graph-expansion retrieval, with a cross-encoder
-reranker — all over Postgres with a test-first CLI harness."
-
 ---
 
 ## Setup

@@ -34,16 +34,80 @@ class MockLLM(LLMProvider):
 
 
 class OpenAILLM(LLMProvider):
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini") -> None:
+    _TOOL_SCHEMA: dict[str, Any] = {
+        "type": "function",
+        "function": {
+            "name": "record_facts",
+            "description": "Record extracted facts from the text.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "facts": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string"},
+                                "fact_type": {
+                                    "type": "string",
+                                    "enum": ["world", "experience"],
+                                },
+                                "entities": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string"},
+                                            "type": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "person",
+                                                    "place",
+                                                    "org",
+                                                    "concept",
+                                                    "artifact",
+                                                    "event",
+                                                ],
+                                            },
+                                        },
+                                        "required": ["name", "type"],
+                                    },
+                                },
+                                "temporal_start": {"type": ["string", "null"]},
+                                "temporal_end": {"type": ["string", "null"]},
+                                "confidence": {"type": "number"},
+                            },
+                            "required": ["text", "fact_type", "entities"],
+                        },
+                    }
+                },
+                "required": ["facts"],
+            },
+        },
+    }
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-4o-mini",
+        base_url: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
         self._api_key = api_key
         self._model = model
+        self._base_url = base_url
+        self._extra_headers = extra_headers or {}
         self._client: Any = None
 
     def _init(self) -> None:
         if self._client is None:
             from openai import OpenAI
 
-            self._client = OpenAI(api_key=self._api_key)
+            self._client = OpenAI(
+                api_key=self._api_key,
+                base_url=self._base_url,
+                default_headers=self._extra_headers,
+            )
 
     def extract_facts(self, chunk_text: str) -> dict[str, Any]:
         self._init()
@@ -53,84 +117,14 @@ class OpenAILLM(LLMProvider):
                 {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                 {"role": "user", "content": chunk_text},
             ],
-            response_format={"type": "json_object"},
-        )
-        raw = response.choices[0].message.content or "{}"
-        try:
-            return json.loads(raw)  # type: ignore[no-any-return]
-        except json.JSONDecodeError:
-            return {"facts": []}
-
-
-class AnthropicLLM(LLMProvider):
-    _TOOL_SCHEMA: dict[str, Any] = {
-        "name": "record_facts",
-        "description": "Record extracted facts from the text.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "facts": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "text": {"type": "string"},
-                            "fact_type": {"type": "string", "enum": ["world", "experience"]},
-                            "entities": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "name": {"type": "string"},
-                                        "type": {
-                                            "type": "string",
-                                            "enum": [
-                                                "person",
-                                                "place",
-                                                "org",
-                                                "concept",
-                                                "artifact",
-                                                "event",
-                                            ],
-                                        },
-                                    },
-                                    "required": ["name", "type"],
-                                },
-                            },
-                            "temporal_start": {"type": ["string", "null"]},
-                            "temporal_end": {"type": ["string", "null"]},
-                            "confidence": {"type": "number"},
-                        },
-                        "required": ["text", "fact_type", "entities"],
-                    },
-                }
-            },
-            "required": ["facts"],
-        },
-    }
-
-    def __init__(self, api_key: str, model: str = "claude-haiku-4-5-20251001") -> None:
-        self._api_key = api_key
-        self._model = model
-        self._client: Any = None
-
-    def _init(self) -> None:
-        if self._client is None:
-            import anthropic
-
-            self._client = anthropic.Anthropic(api_key=self._api_key)
-
-    def extract_facts(self, chunk_text: str) -> dict[str, Any]:
-        self._init()
-        response = self._client.messages.create(
-            model=self._model,
-            max_tokens=2048,
-            system=EXTRACTION_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": chunk_text}],
             tools=[self._TOOL_SCHEMA],
-            tool_choice={"type": "tool", "name": "record_facts"},
+            tool_choice={"type": "function", "function": {"name": "record_facts"}},
         )
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "record_facts":
-                return block.input  # type: ignore[no-any-return]
+        message = response.choices[0].message
+        if message.tool_calls:
+            tool_call = message.tool_calls[0]
+            try:
+                return json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError:
+                pass
         return {"facts": []}
