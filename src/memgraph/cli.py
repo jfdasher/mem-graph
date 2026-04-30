@@ -17,9 +17,20 @@ from .schema import create_graph_schema, create_schema, truncate_all
 
 app = typer.Typer(help="memgraph — fact extraction + entity graph + reranking over Postgres")
 
+# Global state for config path (set by callback, used by commands)
+_config_path: str | None = None
+
 
 @app.callback()
-def _main(debug: Annotated[bool, typer.Option("--debug", "-d", help="Enable DEBUG logging")] = False) -> None:
+def _main(
+    debug: Annotated[bool, typer.Option("--debug", "-d", help="Enable DEBUG logging")] = False,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="Path to dotenv config file"),
+    ] = None,
+) -> None:
+    """memgraph CLI with configurable LLM providers."""
+    global _config_path
     if debug:
         logging.basicConfig(
             level=logging.DEBUG,
@@ -27,6 +38,7 @@ def _main(debug: Annotated[bool, typer.Option("--debug", "-d", help="Enable DEBU
             stream=sys.stderr,
             force=True,
         )
+    _config_path = config
 
 
 def _get_engine() -> Engine:
@@ -56,25 +68,26 @@ def _get_components() -> tuple[Engine, Embedder]:
 
 
 def _get_llm() -> LLMProvider:
-    from .llm import AnthropicLLM, MockLLM, OpenAILLM
+    """Get LLM provider from configuration."""
+    from .config import load_llm_config
+    from .llm import OpenAILLM
 
-    provider = os.environ.get("MEMGRAPH_LLM", "mock").lower()
-    if provider == "openai":
-        key = os.environ.get("OPENAI_API_KEY")
-        if not key:
-            typer.echo("OPENAI_API_KEY is not set.", err=True)
-            raise typer.Exit(1)
-        return OpenAILLM(api_key=key)
-    if provider == "anthropic":
-        key = os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            typer.echo("ANTHROPIC_API_KEY is not set.", err=True)
-            raise typer.Exit(1)
-        return AnthropicLLM(api_key=key)
-    typer.echo(
-        "No LLM configured — set MEMGRAPH_LLM=openai|anthropic for fact extraction.", err=True
+    global _config_path
+    try:
+        config = load_llm_config(_config_path)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+    except FileNotFoundError as e:
+        typer.echo(f"Config file not found: {e}", err=True)
+        raise typer.Exit(1)
+
+    return OpenAILLM(
+        api_key=config.api_key,
+        model=config.model,
+        base_url=config.base_url,
+        extra_headers=config.extra_headers,
     )
-    return MockLLM([])  # no-op mock for CLI without real LLM
 
 
 @app.command()
@@ -84,7 +97,16 @@ def ingest(
     tag: Annotated[list[str], typer.Option("--tag")] = [],  # noqa: B006
     chunk_size: Annotated[int, typer.Option("--chunk-size")] = 512,
 ) -> None:
-    """Ingest text or a file/directory. Set MEMGRAPH_LLM=openai|anthropic for extraction."""
+    """Ingest text or a file/directory.
+
+    Requires LLM configuration via --config or environment variables:
+      - MEMGRAPH_LLM_API_KEY
+      - MEMGRAPH_LLM_BASE_URL
+      - MEMGRAPH_LLM_MODEL
+
+    Example:
+      memgraph --config .env.openai ingest "Your text here"
+    """
     engine, embedder = _get_components()
     llm = _get_llm()
     path = Path(content)
